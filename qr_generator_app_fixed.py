@@ -1,12 +1,28 @@
 
 import io
 from typing import Optional, Tuple
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import qrcode
 from PIL import Image, ImageDraw
 import streamlit as st
 
+# -------------------- Versione --------------------
+APP_VERSION = "v1.0"
+APP_BUILD_TIME = datetime.now(ZoneInfo("Europe/Rome")).strftime("%d/%m/%Y %H:%M")
+
 st.set_page_config(page_title="Generatore di QR Code con Logo", layout="wide")
+
+# Badge versione in alto a destra
+st.markdown(
+    f"""
+    <div style="position: absolute; top: 12px; right: 16px; font-size: 13px; color: #6b7280;">
+        <strong>{APP_VERSION}</strong> – {APP_BUILD_TIME}
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # -------------------- Core --------------------
 def add_center_clear_zone(base_img: Image.Image, box: Tuple[int, int, int, int], *, radius: int = 14, circular: bool = False) -> None:
@@ -112,11 +128,19 @@ with left:
     circular_clear = st.checkbox("Zona di rispetto circolare", value=False)
 
     st.subheader("🎨 Colori")
-    colC, colD = st.columns(2)
-    with colC:
-        fill_color = st.color_picker("Colore moduli", "#000000")
-    with colD:
-        back_color = st.color_picker("Colore sfondo", "#FFFFFF")
+    # Palette rapida + custom picker
+    palette = st.radio("Tavolozza rapida", ["Nero", "Grigio", "Blu", "Rosso", "Personalizzato"], horizontal=True)
+    if palette == "Nero":
+        fill_color = "#000000"
+    elif palette == "Grigio":
+        fill_color = "#808080"
+    elif palette == "Blu":
+        fill_color = "#007BFF"
+    elif palette == "Rosso":
+        fill_color = "#FF0000"
+    else:
+        fill_color = st.color_picker("Colore moduli personalizzato", "#000000")
+    back_color = st.color_picker("Colore sfondo", "#FFFFFF")
 
     generate = st.button("🚀 Genera QR Code")
 
