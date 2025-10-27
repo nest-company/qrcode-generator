@@ -1,189 +1,106 @@
 
 import io
-from typing import Optional, Tuple
 from datetime import datetime
 from zoneinfo import ZoneInfo
-
-import qrcode
-from PIL import Image, ImageDraw
+import segno
+from PIL import Image
 import streamlit as st
 
-# -------------------- Versione --------------------
-APP_VERSION = "v1.0"
+APP_VERSION = "v2.0"
 APP_BUILD_TIME = datetime.now(ZoneInfo("Europe/Rome")).strftime("%d/%m/%Y %H:%M")
 
-st.set_page_config(page_title="Generatore di QR Code con Logo", layout="wide")
+st.set_page_config(page_title="Generatore QR con Segno", layout="wide")
 
-# Badge versione in alto a destra
+# Version label
 st.markdown(
-    f"""
-    <div style="position: absolute; top: 12px; right: 16px; font-size: 13px; color: #6b7280;">
-        <strong>{APP_VERSION}</strong> – {APP_BUILD_TIME}
-    </div>
-    """,
-    unsafe_allow_html=True,
+    f"""<div style='position:absolute; top:12px; right:16px; font-size:13px; color:#6b7280;'>
+    <strong>{APP_VERSION}</strong> – {APP_BUILD_TIME}
+    </div>""", unsafe_allow_html=True
 )
 
-# -------------------- Core --------------------
-def add_center_clear_zone(base_img: Image.Image, box: Tuple[int, int, int, int], *, radius: int = 14, circular: bool = False) -> None:
-    """Disegna una zona bianca di rispetto (quiet area) nel QR, sotto il logo.
-    Modifica l'immagine in-place.
-    - box = (x0, y0, x1, y1)
-    - radius = raggio angoli se rettangolo
-    - circular = True per un cerchio inscritto nel box
-    """
-    draw = ImageDraw.Draw(base_img)
-    if circular:
-        draw.ellipse(box, fill="white")
-    else:
-        # rounded_rectangle disponibile su Pillow 9+
-        try:
-            draw.rounded_rectangle(box, radius=radius, fill="white")
-        except AttributeError:
-            draw.rectangle(box, fill="white")
+st.title("🌀 Generatore di QR Code (Segno)")
+st.caption("Crea QR code vettoriali (SVG) o raster (PNG) con o senza logo.")
 
-def generate_qr_with_logo(
-    qr_data: str,
-    logo_img: Optional[Image.Image] = None,
-    *,
-    version: Optional[int] = None,
-    box_size: int = 10,
-    border: int = 4,
-    logo_scale: float = 0.25,
-    padding_ratio: float = 0.18,
-    rounded_radius: int = 14,
-    circular_clear: bool = False,
-    fill_color: str = "black",
-    back_color: str = "white",
-) -> Image.Image:
-    """Genera QR con logo e zona centrale di rispetto.
-    - logo_scale: frazione rispetto al lato minimo del QR (0.1-0.4 è realistico)
-    - padding_ratio: padding bianco attorno al logo come frazione del lato logo
-    """
-    qr = qrcode.QRCode(
-        version=version,
-        error_correction=qrcode.constants.ERROR_CORRECT_H,
-        box_size=box_size,
-        border=border,
-    )
-    qr.add_data(qr_data)
-    qr.make(fit=True)
+def generate_qr_segno(data, fill_color, back_color, scale, border, logo_file=None, fmt="PNG"):
+    qr = segno.make(data, error="h")
+    buf = io.BytesIO()
 
-    img = qr.make_image(fill_color=fill_color, back_color=back_color).convert("RGBA")
+    if fmt == "SVG":
+        qr.save(buf, kind="svg", scale=scale, border=border, dark=fill_color, light=back_color)
+        return buf.getvalue(), "image/svg+xml"
 
-    if logo_img is None:
-        return img.convert("RGB")
+    # Per PNG, generiamo l'immagine e aggiungiamo il logo se presente
+    qr.save(buf, kind="png", scale=scale, border=border, dark=fill_color, light=back_color)
+    buf.seek(0)
+    img = Image.open(buf).convert("RGBA")
 
-    qr_w, qr_h = img.size
+    if logo_file is not None:
+        logo = Image.open(logo_file).convert("RGBA")
+        # Ridimensiona logo (circa 20-25% del QR)
+        qr_w, qr_h = img.size
+        logo_size = int(min(qr_w, qr_h) * 0.25)
+        logo.thumbnail((logo_size, logo_size))
+        pos = ((qr_w - logo.width) // 2, (qr_h - logo.height) // 2)
+        # Incolla logo sopra QR
+        img.alpha_composite(logo, dest=pos)
 
-    # Prepara logo
-    logo = logo_img.convert("RGBA")
-    target = int(min(qr_w, qr_h) * logo_scale)
-    logo.thumbnail((target, target), Image.LANCZOS)
-    lw, lh = logo.size
+    out_buf = io.BytesIO()
+    img.save(out_buf, format="PNG")
+    return out_buf.getvalue(), "image/png"
 
-    # Box della quiet area (con padding)
-    pad = int(max(lw, lh) * padding_ratio)
-    x0 = (qr_w - lw) // 2 - pad
-    y0 = (qr_h - lh) // 2 - pad
-    x1 = (qr_w + lw) // 2 + pad
-    y1 = (qr_h + lh) // 2 + pad
-
-    # Clamp ai bordi
-    x0, y0 = max(0, x0), max(0, y0)
-    x1, y1 = min(qr_w, x1), min(qr_h, y1)
-
-    # Disegna quiet area
-    add_center_clear_zone(img, (x0, y0, x1, y1), radius=rounded_radius, circular=circular_clear)
-
-    # Compositing del logo sopra
-    pos = ((qr_w - lw) // 2, (qr_h - lh) // 2)
-    img.alpha_composite(logo, dest=pos)
-
-    return img.convert("RGB")
-
-# -------------------- UI --------------------
-st.title("🌀 Generatore di QR Code con Logo (con zona di rispetto)")
-st.caption("Assicura la leggibilità creando un'area bianca sotto al logo.")
-
+# ---- UI ----
 left, right = st.columns([1, 1])
 
 with left:
     st.subheader("① Dati")
-    qr_text = st.text_input("🔗 URL o testo:", placeholder="https://tuosito.com")
+    data = st.text_input("🔗 URL o testo da codificare:", placeholder="https://tuosito.com")
 
-    st.subheader("② Logo (opzionale)")
-    logo_file = st.file_uploader("Carica logo (PNG/JPG)", type=["png", "jpg", "jpeg"])
+    st.subheader("② Colori")
+    fill_color = st.color_picker("Colore moduli", "#000000")
+    back_color = st.color_picker("Colore sfondo", "#FFFFFF")
 
     st.subheader("③ Parametri QR")
-    colA, colB = st.columns(2)
-    with colA:
-        box_size = st.slider("Dimensione modulo (box_size)", 6, 16, 10)
-        border = st.slider("Bordo esterno (quiet zone)", 2, 8, 4)
-        version = st.selectbox("Versione (None = auto)", [None] + list(range(1, 20)), index=0)
-    with colB:
-        logo_scale = st.slider("Scala logo vs QR", 0.10, 0.40, 0.25, step=0.01)
-        padding_ratio = st.slider("Padding attorno al logo", 0.05, 0.40, 0.18, step=0.01)
-        rounded_radius = st.slider("Raggio angoli clear area", 0, 30, 14)
-    circular_clear = st.checkbox("Zona di rispetto circolare", value=False)
+    scale = st.slider("Scala (dimensione complessiva)", 3, 20, 8)
+    border = st.slider("Bordo esterno (quiet zone)", 1, 8, 4)
 
-    st.subheader("🎨 Colori")
-    # Palette rapida + custom picker
-    palette = st.radio("Tavolozza rapida", ["Nero", "Grigio", "Blu", "Rosso", "Personalizzato"], horizontal=True)
-    if palette == "Nero":
-        fill_color = "#000000"
-    elif palette == "Grigio":
-        fill_color = "#808080"
-    elif palette == "Blu":
-        fill_color = "#007BFF"
-    elif palette == "Rosso":
-        fill_color = "#FF0000"
-    else:
-        fill_color = st.color_picker("Colore moduli personalizzato", "#000000")
-    back_color = st.color_picker("Colore sfondo", "#FFFFFF")
+    st.subheader("④ Logo (solo per PNG)")
+    logo_file = st.file_uploader("Carica logo (PNG/JPG)", type=["png", "jpg", "jpeg"])
+
+    st.subheader("⑤ Formato output")
+    fmt = st.selectbox("Formato download", ["PNG", "SVG"])
 
     generate = st.button("🚀 Genera QR Code")
 
 with right:
-    st.subheader("Anteprima")
+    st.subheader("Anteprima e Download")
     if generate:
-        if not qr_text:
-            st.warning("⚠️ Inserisci prima URL o testo.")
+        if not data:
+            st.warning("⚠️ Inserisci prima un testo o URL.")
         else:
-            logo = None
-            if logo_file:
-                try:
-                    logo = Image.open(logo_file)
-                except Exception as e:
-                    st.error(f"Logo non valido: {e}")
-            img = generate_qr_with_logo(
-                qr_text,
-                logo,
-                version=version,
-                box_size=box_size,
-                border=border,
-                logo_scale=logo_scale,
-                padding_ratio=padding_ratio,
-                rounded_radius=rounded_radius,
-                circular_clear=circular_clear,
+            result, mime = generate_qr_segno(
+                data=data,
                 fill_color=fill_color,
                 back_color=back_color,
+                scale=scale,
+                border=border,
+                logo_file=logo_file if fmt == "PNG" else None,
+                fmt=fmt
             )
-            st.image(img, caption="QR Code generato", use_container_width=True)
 
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            st.download_button("💾 Scarica PNG", buf.getvalue(), file_name="qrcode.png", mime="image/png")
+            if fmt == "PNG":
+                st.image(result, caption="Anteprima QR Code", use_container_width=True)
+            else:
+                st.image("data:image/svg+xml;base64," + result.decode("utf-8").encode("base64").decode(), caption="Anteprima SVG")
+
+            file_name = f"qrcode_{fmt.lower()}.{fmt.lower()}"
+            st.download_button(f"💾 Scarica {fmt}", data=result, file_name=file_name, mime=mime)
     else:
         st.info("👈 Inserisci i dati e premi 'Genera QR Code'.")
 
-# -------------------- Style --------------------
+# ---- Style ----
 st.markdown(
-    """
-    <style>
+    """<style>
     .stButton>button { background-color:#3CBFAE; color:white; font-weight:600; border-radius:10px; padding:10px 20px; }
     .stButton>button:hover { background-color:#2CA18A; transition:.2s; }
-    </style>
-    """,
-    unsafe_allow_html=True,
+    </style>""", unsafe_allow_html=True
 )
